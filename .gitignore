@@ -1,0 +1,8 @@
+﻿################################################################################
+# This .gitignore file was automatically created by Microsoft(R) Visual Studio.
+################################################################################
+
+/.vs/SignerXadesBesEc
+/bin/Debug
+/obj/Debug
+/.vs/CopilotSnapshots/4D2362BE4547DD4DA39F421AFA77C4C5
