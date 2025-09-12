@@ -1,1 +1,229 @@
 # SignerXadesBesEc
+
+Firma de comprobantes electrónicos XML usando certificados PKCS#12 (.p12/.pfx) generando firmas XAdES-BES (enveloped) en .NET Framework 4.8.1 apoyado en librerías portadas Java (`es.mityc.*`).
+
+---
+## Tabla de Contenido
+1. Objetivo
+2. Componentes Principales
+3. Flujo de Firma (Resumen)
+4. Validaciones Implementadas
+5. Modos de Integración
+6. Estrategias para Pasar Parámetros
+7. Seguridad
+8. Despliegue a Producción
+9. Errores Comunes y Solución
+10. Futuras Mejores
+11. Ejemplos Rápidos (CLI / API)
+12. Construcción y Ejecución Local
+13. Observabilidad y Métricas
+14. Contribuciones
+15. Licencia
+16. Glosario
+
+---
+## 1. Objetivo
+Firmar un XML (ej. comprobante electrónico con nodo raíz `comprobante`) aplicando una firma **XAdES-BES enveloped** utilizando un certificado digital con clave privada contenido en un archivo PKCS#12.
+
+---
+## 2. Componentes Principales
+| Componente | Rol | Notas |
+|------------|-----|-------|
+| `Program` | Punto de entrada (console app). | Modo interactivo o por argumentos. |
+| `SignDocument` | Lógica de firma XAdES-BES. | Usa librerías Java portadas (`es.mityc.*`). |
+| `PassStoreKS` | Acceso a KeyStore. | Maneja password PKCS#12. |
+| Librerías `es.mityc.*` | Motor XAdES. | Portadas vía IKVM (interop Java/.NET). |
+
+---
+## 3. Flujo de Firma (Resumen)
+1. Leer parámetros: XML, certificado (.p12) y contraseña.
+2. Cargar KeyStore PKCS#12 ? obtener certificado X509 + clave privada.
+3. Construir DOM (`org.w3c.dom.Document`).
+4. Configurar `DataToSign`: XAdES_BES, esquema 1.3.2, modo enveloped.
+5. Agregar objeto a firmar (nodo `comprobante`).
+6. Ejecutar `FirmaXML.signFile(...)`.
+7. Serializar XML firmado y devolverlo.
+
+---
+## 4. Validaciones Implementadas
+- Expiración del certificado (antes de firmar si se añade en capas superiores).
+- Manejo controlado de errores (consola).
+- Verificación de existencia de archivo y nodo objetivo.
+
+---
+## 5. Modos de Integración
+### 5.1. Consola (Actual)
+```
+SignerXadesBesEc.exe <ruta-cert.p12> <password> [xml-entrada] [xml-salida]
+```
+Faltando parámetros ? modo interactivo.
+
+### 5.2. API (ASP.NET Web API Clásico)
+```csharp
+[HttpPost]
+[Route("api/firma/xades")] 
+public IHttpActionResult Firmar(FirmarRequest req)
+{
+    if (string.IsNullOrWhiteSpace(req.Xml) || string.IsNullOrWhiteSpace(req.Password))
+        return BadRequest("Datos incompletos");
+    var certBytes = Convert.FromBase64String(req.CertificadoBase64);
+    var signer = new SignDocument();
+    string xmlFirmado = null;
+    if (!signer.Sign(req.Xml, req.Password, certBytes, ref xmlFirmado))
+        return InternalServerError(new Exception("Error firmando"));
+    return Ok(new { xmlFirmado });
+}
+public class FirmarRequest { public string Xml { get; set; } public string CertificadoBase64 { get; set; } public string Password { get; set; } }
+```
+Considerar: límite tamaño, auditoría, sanitizar/ocultar stacktrace.
+
+### 5.3. Servicio Windows (Batch / Carpeta / Cola)
+Pseudo:
+```csharp
+protected override void OnStart(string[] args)
+{
+    _timer = new System.Timers.Timer(5000);
+    _timer.Elapsed += (s, e) => ProcesarPendientes();
+    _timer.Start();
+}
+```
+Ver documento original para ejemplo completo (migrado aquí).
+
+### 5.4. Certificado en Memoria / Bytes
+- Archivo `.p12` protegido (NTFS ACL).
+- Base64 desde DB / Key Vault / Vault.
+- Cache controlada (singleton seguro) si alta demanda.
+
+---
+## 6. Estrategias para Pasar Parámetros
+| Escenario | Certificado | Password | XML | Output |
+|-----------|-------------|----------|-----|--------|
+| CLI | Ruta archivo | Argumento / prompt | Ruta / STDIN / prompt | Archivo / STDOUT |
+| API | Base64 body | JSON (HTTPS) | JSON | JSON (texto/Base64) |
+| Servicio Windows | Archivo / Vault | Config segura (DPAPI) | Archivo / Cola | Archivo salida |
+
+---
+## 7. Seguridad
+1. No almacenar contraseña en texto plano (usar DPAPI / ProtectedData).
+2. Permisos NTFS mínimos al `.p12`.
+3. Limpiar buffers sensibles si aplica.
+4. Evitar exponer XML firmado en ubicaciones inseguras.
+5. Registrar thumbprint y número de serie del certificado.
+6. Endurecer parser para evitar XXE:
+```csharp
+factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
+factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+```
+7. Validar entrada (bien formado, tamaño razonable).
+8. Considerar monitoreo de expiración (alerta cuando <30 días).
+
+---
+## 8. Despliegue a Producción
+### 8.1. Consola
+- Empaquetar binarios + dependencias.
+- Script `.bat` / PowerShell con variables.
+
+### 8.2. API (IIS)
+- AppPool dedicado.
+- Logging (ETW / Serilog / ELK / AppInsights - futuro .NET Core/8).
+- Configurar `maxRequestLength` / `requestFiltering`.
+
+### 8.3. Servicio Windows
+- Instalar con `sc create` o `InstallUtil.exe`.
+- Cuenta de servicio con privilegios mínimos.
+- Monitoreo (SCOM, Zabbix, etc.).
+
+### 8.4. CI/CD
+- Tagging: `vX.Y.Z`.
+- Pipeline: build ? (tests) ? publish ? despliegue.
+
+### 8.5. Observabilidad
+- Logs estructurados JSON.
+- Correlación por ID de transacción.
+- Métricas: tiempo promedio, errores, firmas/hora, expiración.
+
+---
+## 9. Errores Comunes y Solución
+| Problema | Causa | Solución |
+|----------|-------|----------|
+| Certificate is expired | Certificado vencido | Renovar / distribuir nuevo .p12 |
+| Null en xmlSigned | Falta nodo `comprobante` | Validar estructura antes |
+| Failed to load certificate | Password incorrecta / corrupto | Verificar credenciales / reemitir |
+| Excepción parser | XML mal formado | Validar antes |
+| Rendimiento bajo | Concurrencia serie | Pool procesos / servicio escalado |
+
+---
+## 10. Futuras Mejores
+- Migrar a .NET 8 (librería XAdES nativa) cuando sea viable.
+- XAdES-EPES / políticas.
+- Cache KeyStore.
+- Validación cadena (OCSP / CRL).
+- Docker (Windows Containers) si se requiere empaquetado.
+
+---
+## 11. Ejemplos Rápidos
+CLI:
+```
+SignerXadesBesEc.exe certs\miCert.p12 MiPassword entrada.xml salida_firmada.xml
+```
+Sin XML (usa mínimo):
+```
+SignerXadesBesEc.exe certs\miCert.p12 MiPassword
+```
+API (cliente):
+```csharp
+var json = JsonConvert.SerializeObject(new {
+  Xml = File.ReadAllText("entrada.xml"),
+  CertificadoBase64 = Convert.ToBase64String(File.ReadAllBytes("certs/miCert.p12")),
+  Password = "MiPasswordSegura"
+});
+```
+
+---
+## 12. Construcción y Ejecución Local
+Prerequisitos:
+- Windows + .NET Framework 4.8.1 Dev Pack.
+- Visual Studio 2019/2022 o MSBuild 16+.
+
+Pasos:
+1. Clonar repo.
+2. Restaurar dependencias (si hay referencias IKVM locales, validar rutas).
+3. Compilar solución.
+4. Ejecutar desde consola con parámetros.
+
+### Notas build
+- Ajustar plataforma x86/x64 según dependencias IKVM.
+- Asegurar presencia de DLLs `es.mityc.*` en output.
+
+---
+## 13. Observabilidad y Métricas
+Sugerido integrar (no implementado aún):
+- Interfaz de logging (`ILogger`) con adaptador Serilog.
+- Métricas (prometheus-net en migración a Core) o contadores de rendimiento.
+- Evento de auditoría por firma (timestamp, thumbprint, hash del XML original opcional).
+
+---
+## 14. Contribuciones
+1. Crear issue describiendo cambio.
+2. Fork + rama feature (`feature/nombre`).
+3. Pull Request con descripción y pasos de prueba.
+4. Mantener estilo y comentarios en español.
+
+---
+## 15. Licencia
+Pendiente de definir (MIT / Apache-2.0 sugerido). Añadir archivo `LICENSE` antes de primera release pública.
+
+---
+## 16. Glosario
+| Término | Descripción |
+|---------|-------------|
+| XAdES-BES | Perfil básico de firma electrónica XML avanzado. |
+| Enveloped | `<Signature>` dentro del XML original. |
+| PKCS#12 | Formato certificado + clave privada. |
+| Thumbprint | Hash identificador del certificado. |
+
+---
+
+### Estado
+Documento de arquitectura original consolidado en este README.

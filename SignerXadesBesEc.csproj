@@ -92,7 +92,7 @@
     <Compile Include="SignDocument.cs" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="ARQUITECTURA_FIRMA.md" />
+    <None Include="README.md" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>
