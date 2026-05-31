@@ -1,9 +1,52 @@
-﻿################################################################################
-# This .gitignore file was automatically created by Microsoft(R) Visual Studio.
-################################################################################
+﻿## .NET / MSBuild build output
+bin/
+obj/
 
-/.vs/SignerXadesBesEc
-/bin/Debug
-/obj/Debug
-/.vs/CopilotSnapshots/4D2362BE4547DD4DA39F421AFA77C4C5
-/.vs/CopilotSnapshots/1C28AA3CAF35CA499EB4C7E5C0A50813
+## NuGet
+*.nupkg
+*.snupkg
+packages/
+.nuget/
+nuget.config
+
+## Visual Studio
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.vcxproj.filters
+
+## Visual Studio Code
+.vscode/
+
+## ReSharper / Rider
+_ReSharper*/
+*.DotSettings.user
+.idea/
+
+## Test results
+TestResults/
+*.trx
+*.coverage
+*.coveragexml
+coverage/
+CoverageReport/
+
+## Publish / deployment output
+publish/
+*.pubxml.user
+
+## Crash / diagnostic dumps
+*.dmp
+*.mdmp
+
+## OS artifacts
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+## Editor swap / temp files
+*~
+*.swp
+*.tmp
