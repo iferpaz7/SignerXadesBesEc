@@ -6,13 +6,10 @@ using System.Threading.Tasks;
 namespace SignerXadesBesEc
 {
     /// <summary>
-    /// Console entry point para firma XAdES-BES / SRI Ecuador.
+    /// Firma comprobantes electrónicos XML para SRI Ecuador (XAdES-BES).
     ///
-    /// Modos:
-    ///   Genérico : <cert.p12> <password> [xml-input] [xml-output]
-    ///   SRI      : <cert.p12> <password> <claveAcceso49> [xml-input] [xml-output]
+    /// Uso: <cert.p12> <password> <claveAcceso49> [xml-input] [xml-output]
     ///
-    /// Si se provee una cadena de 49 dígitos como tercer argumento se activa el modo SRI.
     /// Si no se proveen suficientes argumentos, entra en modo interactivo.
     /// </summary>
     public static class Program
@@ -26,18 +23,18 @@ namespace SignerXadesBesEc
             {
                 string p12Path;
                 string password;
-                string? claveAcceso;    // 49 dígitos → modo SRI Ecuador
+                string claveAcceso;
                 string? xmlInputPath;
                 string? xmlOutputPath;
 
                 if (!TryParseArgs(args, out p12Path, out password, out claveAcceso, out xmlInputPath, out xmlOutputPath))
                 {
-                    Console.WriteLine("=== SignerXadesBesEc — Modo interactivo ===");
-                    Console.WriteLine("(ENTER para aceptar valores por defecto / saltar opcionales)\n");
-                    p12Path      = ReadRequiredPath("Ruta del certificado (.p12 / .pfx): ", mustExist: true);
-                    password     = ReadNonEmpty("Contraseña del certificado: ");
-                    claveAcceso  = ReadOptional("Clave de acceso SRI (49 dígitos, ENTER para modo genérico): ");
-                    xmlInputPath = ReadOptionalPath("Ruta del XML a firmar (ENTER para XML de prueba): ");
+                    Console.WriteLine("=== SignerXadesBesEc SRI Ecuador — Modo interactivo ===");
+                    Console.WriteLine("(ENTER para omitir opcionales)\n");
+                    p12Path       = ReadRequiredPath("Ruta del certificado (.p12 / .pfx): ", mustExist: true);
+                    password      = ReadNonEmpty("Contraseña del certificado: ");
+                    claveAcceso   = ReadClaveAcceso("Clave de acceso SRI (49 dígitos): ");
+                    xmlInputPath  = ReadOptionalPath("Ruta del XML a firmar (ENTER para XML de prueba): ");
                     xmlOutputPath = ReadOptional("Ruta del XML firmado de salida (ENTER para imprimir en consola): ");
                 }
 
@@ -57,22 +54,9 @@ namespace SignerXadesBesEc
                     return 3;
 
                 string? xmlSigned = null;
-                bool ok;
-
-                bool sriMode = !string.IsNullOrWhiteSpace(claveAcceso) && claveAcceso!.Length == 49;
-
-                if (sriMode)
-                {
-                    Console.WriteLine("Modo: SRI Ecuador (clave de acceso: " + claveAcceso + ")");
-                    var signer = new SignDocumentSriEcuador();
-                    ok = signer.Sign(xmlToSign, password, certificateBytes, claveAcceso!, ref xmlSigned);
-                }
-                else
-                {
-                    Console.WriteLine("Modo: XAdES-BES genérico");
-                    var signer = new SignDocument();
-                    ok = signer.Sign(xmlToSign, password, certificateBytes, ref xmlSigned);
-                }
+                Console.WriteLine("Firmando: clave de acceso " + claveAcceso);
+                var signer = new SriSigner();
+                bool ok = signer.Sign(xmlToSign, password, certificateBytes, claveAcceso, ref xmlSigned);
 
                 if (!ok || string.IsNullOrEmpty(xmlSigned))
                 {
@@ -90,10 +74,8 @@ namespace SignerXadesBesEc
                     Console.WriteLine(xmlSigned);
                 }
 
-                // En modo SRI, detectar ambiente desde la clave de acceso (posición 23: '1'=pruebas, '2'=producción)
-                if (sriMode)
-                {
-                    bool esProduccion = claveAcceso!.Length == 49 && claveAcceso[23] == '2';
+                // Detectar ambiente desde la clave de acceso (posición 23: '1'=pruebas, '2'=producción)
+                bool esProduccion = claveAcceso[23] == '2';
                     string sriUrl = esProduccion ? SriReceptionService.UrlProduccion : SriReceptionService.UrlPruebas;
                     string ambienteLabel = esProduccion ? "PRODUCCIÓN" : "PRUEBAS";
 
@@ -116,7 +98,6 @@ namespace SignerXadesBesEc
                         Console.WriteLine("\n--- Respuesta raw SRI ---");
                         Console.WriteLine(resp.XmlSri);
                     }
-                }
 
                 return 0;
             }
@@ -137,32 +118,27 @@ namespace SignerXadesBesEc
             string[] args,
             out string p12Path,
             out string password,
-            out string? claveAcceso,
+            out string claveAcceso,
             out string? xmlInput,
             out string? xmlOutput)
         {
-            p12Path = password = string.Empty;
-            claveAcceso = xmlInput = xmlOutput = null;
+            p12Path = password = claveAcceso = string.Empty;
+            xmlInput = xmlOutput = null;
 
-            if (args == null || args.Length < 2)
+            if (args == null || args.Length < 3) return false;
+
+            p12Path     = args[0];
+            password    = args[1];
+
+            if (args[2].Length != 49 || !IsAllDigits(args[2]))
+            {
+                Console.Error.WriteLine("Error: El tercer argumento debe ser la clave de acceso SRI (49 dígitos).");
                 return false;
-
-            p12Path  = args[0];
-            password = args[1];
-
-            // Detect if 3rd arg is a 49-digit clave de acceso (SRI mode)
-            if (args.Length >= 3 && args[2].Length == 49 && IsAllDigits(args[2]))
-            {
-                claveAcceso = args[2];
-                xmlInput    = args.Length > 3 ? args[3] : null;
-                xmlOutput   = args.Length > 4 ? args[4] : null;
-            }
-            else
-            {
-                xmlInput  = args.Length > 2 ? args[2] : null;
-                xmlOutput = args.Length > 3 ? args[3] : null;
             }
 
+            claveAcceso = args[2];
+            xmlInput    = args.Length > 3 ? args[3] : null;
+            xmlOutput   = args.Length > 4 ? args[4] : null;
             return true;
         }
 
@@ -215,7 +191,7 @@ namespace SignerXadesBesEc
 
                 if (cert.GetRSAPrivateKey() == null)
                 {
-                    Console.Error.WriteLine("Error: El certificado no usa RSA. SRI Ecuador requiere RSA-SHA256.");
+                    Console.Error.WriteLine("Error: El certificado no usa RSA. SRI Ecuador requiere certificados RSA.");
                     return false;
                 }
 
@@ -270,6 +246,17 @@ namespace SignerXadesBesEc
                 if (string.IsNullOrWhiteSpace(input)) return null;
                 if (!File.Exists(input)) { Console.WriteLine("Archivo no existe (ENTER para saltar): " + input); continue; }
                 return input.Trim();
+            }
+        }
+
+        private static string ReadClaveAcceso(string prompt)
+        {
+            while (true)
+            {
+                Console.Write(prompt);
+                var input = Console.ReadLine()?.Trim() ?? string.Empty;
+                if (input.Length == 49 && IsAllDigits(input)) return input;
+                Console.WriteLine("Debe ser exactamente 49 dígitos numéricos.");
             }
         }
     }

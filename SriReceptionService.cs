@@ -16,9 +16,9 @@ namespace SignerXadesBesEc
         public const string UrlPruebas    = "https://celcer.sri.gob.ec/comprobantes-electronicos-ws/RecepcionComprobantesOffline";
         public const string UrlProduccion = "https://cel.sri.gob.ec/comprobantes-electronicos-ws/RecepcionComprobantesOffline";
 
-        public async Task<ResponseSri> ReceptionAsync(string xmlSigned, string url)
+        public async Task<SriResponse> ReceptionAsync(string xmlSigned, string url)
         {
-            var responseSri = new ResponseSri();
+            var responseSri = new SriResponse();
             try
             {
                 var soapBody =

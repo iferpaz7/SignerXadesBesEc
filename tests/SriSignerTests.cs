@@ -9,13 +9,13 @@ namespace SignerXadesBesEc.Tests
     /// Tests para SignDocumentSriEcuador — cumplimiento con Ficha Técnica SRI v2.32.
     /// Todos usan certificado RSA auto-firmado — no se necesita .p12 real.
     /// </summary>
-    public class SignDocumentSriEcuadorTests
+    public class SriSignerTests
     {
         private readonly byte[] _p12;
         private readonly string _pwd;
         private const string ClaveAcceso = CertificateHelper.ValidClaveAcceso;
 
-        public SignDocumentSriEcuadorTests()
+        public SriSignerTests()
         {
             (_p12, _pwd) = CertificateHelper.CreateSelfSignedRsaCert();
         }
@@ -25,7 +25,7 @@ namespace SignerXadesBesEc.Tests
         [Fact]
         public void Sign_ValidXml_ReturnsTrue()
         {
-            var signer = new SignDocumentSriEcuador();
+            var signer = new SriSigner();
             string? signed = null;
 
             var result = signer.Sign(CertificateHelper.SampleInvoiceXml, _pwd, _p12, ClaveAcceso, ref signed);
@@ -38,7 +38,7 @@ namespace SignerXadesBesEc.Tests
         [Fact]
         public void Sign_ProducesWellFormedXml()
         {
-            var signer = new SignDocumentSriEcuador();
+            var signer = new SriSigner();
             string? signed = null;
             signer.Sign(CertificateHelper.SampleInvoiceXml, _pwd, _p12, ClaveAcceso, ref signed);
 
@@ -52,7 +52,7 @@ namespace SignerXadesBesEc.Tests
         [Fact]
         public void Sign_SignatureIsLastChildOfRoot()
         {
-            var signer = new SignDocumentSriEcuador();
+            var signer = new SriSigner();
             string? signed = null;
             signer.Sign(CertificateHelper.SampleInvoiceXml, _pwd, _p12, ClaveAcceso, ref signed);
 
@@ -67,7 +67,7 @@ namespace SignerXadesBesEc.Tests
         public void Sign_ContainsRandomNumericIds()
         {
             // New format (MITyC legacy): random numeric IDs, NOT clave-de-acceso based
-            var signer = new SignDocumentSriEcuador();
+            var signer = new SriSigner();
             string? signed = null;
             signer.Sign(CertificateHelper.SampleInvoiceXml, _pwd, _p12, ClaveAcceso, ref signed);
 
@@ -82,7 +82,7 @@ namespace SignerXadesBesEc.Tests
         [Fact]
         public void Sign_ContainsSignedDataObjectProperties()
         {
-            var signer = new SignDocumentSriEcuador();
+            var signer = new SriSigner();
             string? signed = null;
             signer.Sign(CertificateHelper.SampleInvoiceXml, _pwd, _p12, ClaveAcceso, ref signed);
 
@@ -95,7 +95,7 @@ namespace SignerXadesBesEc.Tests
         [Fact]
         public void Sign_ContainsRsaKeyValue()
         {
-            var signer = new SignDocumentSriEcuador();
+            var signer = new SriSigner();
             string? signed = null;
             signer.Sign(CertificateHelper.SampleInvoiceXml, _pwd, _p12, ClaveAcceso, ref signed);
 
@@ -107,7 +107,7 @@ namespace SignerXadesBesEc.Tests
         [Fact]
         public void Sign_ContainsCanonicalizationMethod()
         {
-            var signer = new SignDocumentSriEcuador();
+            var signer = new SriSigner();
             string? signed = null;
             signer.Sign(CertificateHelper.SampleInvoiceXml, _pwd, _p12, ClaveAcceso, ref signed);
 
@@ -117,7 +117,7 @@ namespace SignerXadesBesEc.Tests
         [Fact]
         public void Sign_ContainsEnvelopedAndC14NTransforms()
         {
-            var signer = new SignDocumentSriEcuador();
+            var signer = new SriSigner();
             string? signed = null;
             signer.Sign(CertificateHelper.SampleInvoiceXml, _pwd, _p12, ClaveAcceso, ref signed);
 
@@ -128,7 +128,7 @@ namespace SignerXadesBesEc.Tests
         [Fact]
         public void Sign_SigningTimeContainsEcuadorOffset()
         {
-            var signer = new SignDocumentSriEcuador();
+            var signer = new SriSigner();
             string? signed = null;
             signer.Sign(CertificateHelper.SampleInvoiceXml, _pwd, _p12, ClaveAcceso, ref signed);
 
@@ -138,7 +138,7 @@ namespace SignerXadesBesEc.Tests
         [Fact]
         public void Sign_SignedPropertiesReferenceBeforeContentReference()
         {
-            var signer = new SignDocumentSriEcuador();
+            var signer = new SriSigner();
             string? signed = null;
             signer.Sign(CertificateHelper.SampleInvoiceXml, _pwd, _p12, ClaveAcceso, ref signed);
 
@@ -154,7 +154,7 @@ namespace SignerXadesBesEc.Tests
         [Fact]
         public void Sign_UsesXadesNamespace()
         {
-            var signer = new SignDocumentSriEcuador();
+            var signer = new SriSigner();
             string? signed = null;
             signer.Sign(CertificateHelper.SampleInvoiceXml, _pwd, _p12, ClaveAcceso, ref signed);
 
@@ -166,7 +166,7 @@ namespace SignerXadesBesEc.Tests
         [Fact]
         public void Sign_ClaveAccesoTooShort_ReturnsFalse()
         {
-            var signer = new SignDocumentSriEcuador();
+            var signer = new SriSigner();
             string? signed = null;
 
             var result = signer.Sign(CertificateHelper.SampleInvoiceXml, _pwd, _p12, "1234", ref signed);
@@ -178,7 +178,7 @@ namespace SignerXadesBesEc.Tests
         [Fact]
         public void Sign_ClaveAccesoEmpty_ReturnsFalse()
         {
-            var signer = new SignDocumentSriEcuador();
+            var signer = new SriSigner();
             string? signed = null;
 
             var result = signer.Sign(CertificateHelper.SampleInvoiceXml, _pwd, _p12, "", ref signed);
@@ -190,7 +190,7 @@ namespace SignerXadesBesEc.Tests
         [Fact]
         public void Sign_WrongPassword_ReturnsFalse()
         {
-            var signer = new SignDocumentSriEcuador();
+            var signer = new SriSigner();
             string? signed = null;
 
             var result = signer.Sign(CertificateHelper.SampleInvoiceXml, "wrong_pass", _p12, ClaveAcceso, ref signed);
@@ -203,7 +203,7 @@ namespace SignerXadesBesEc.Tests
         public void Sign_EcdsaCert_ReturnsFalse()
         {
             var (ecP12, ecPwd) = CertificateHelper.CreateSelfSignedEcdsaCert();
-            var signer = new SignDocumentSriEcuador();
+            var signer = new SriSigner();
             string? signed = null;
 
             var result = signer.Sign(CertificateHelper.SampleInvoiceXml, ecPwd, ecP12, ClaveAcceso, ref signed);
@@ -215,7 +215,7 @@ namespace SignerXadesBesEc.Tests
         [Fact]
         public void Sign_MalformedXml_ReturnsFalse()
         {
-            var signer = new SignDocumentSriEcuador();
+            var signer = new SriSigner();
             string? signed = null;
 
             var result = signer.Sign("<unclosed>", _pwd, _p12, ClaveAcceso, ref signed);
@@ -227,7 +227,7 @@ namespace SignerXadesBesEc.Tests
         [Fact]
         public void Sign_EmptyXml_ReturnsFalse()
         {
-            var signer = new SignDocumentSriEcuador();
+            var signer = new SriSigner();
             string? signed = null;
 
             var result = signer.Sign("", _pwd, _p12, ClaveAcceso, ref signed);
@@ -241,7 +241,7 @@ namespace SignerXadesBesEc.Tests
         [Fact]
         public void Sign_TwoCallsProduceDifferentSigningTimes()
         {
-            var signer = new SignDocumentSriEcuador();
+            var signer = new SriSigner();
             string? signed1 = null, signed2 = null;
 
             // Use separate cert instances for each call

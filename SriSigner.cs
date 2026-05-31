@@ -17,7 +17,7 @@ namespace SignerXadesBesEc
     ///  - SignedInfo/KeyInfo/Object construidos manualmente para controlar IDs exactos
     ///  - SignatureValue calculado con RSA PKCS#1 v1.5 + SHA-1
     /// </summary>
-    public class SignDocumentSriEcuador
+    public class SriSigner
     {
         private const string DsNs   = "http://www.w3.org/2000/09/xmldsig#";
         private const string EtsiNs = "http://uri.etsi.org/01903/v1.3.2#";

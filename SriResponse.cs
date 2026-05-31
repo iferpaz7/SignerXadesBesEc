@@ -1,6 +1,6 @@
 namespace SignerXadesBesEc
 {
-    public class ResponseSri
+    public class SriResponse
     {
         public string Estado              { get; set; } = string.Empty;
         public string Identificador       { get; set; } = string.Empty;
