@@ -1,229 +1,288 @@
 # SignerXadesBesEc
 
-Firma de comprobantes electr�nicos XML usando certificados PKCS#12 (.p12/.pfx) generando firmas XAdES-BES (enveloped) en .NET Framework 4.8.1 apoyado en librer�as portadas Java (`es.mityc.*`).
+Firma de comprobantes electrónicos XML para **SRI Ecuador** usando certificados PKCS#12 (`.p12` / `.pfx`), generando firmas **XAdES-BES enveloped** en .NET 10 con APIs nativas.
 
 ---
-## Tabla de Contenido
-1. Objetivo
-2. Componentes Principales
-3. Flujo de Firma (Resumen)
-4. Validaciones Implementadas
-5. Modos de Integraci�n
-6. Estrategias para Pasar Par�metros
-7. Seguridad
-8. Despliegue a Producci�n
-9. Errores Comunes y Soluci�n
-10. Futuras Mejores
-11. Ejemplos R�pidos (CLI / API)
-12. Construcci�n y Ejecuci�n Local
-13. Observabilidad y M�tricas
-14. Contribuciones
-15. Licencia
-16. Glosario
+
+## Compatibilidad con certificados
+
+El código es **agnóstico a la entidad emisora** del certificado. Cualquier `.p12` válido funciona en el proceso de firma — la validación de la CA la realiza el SRI en su servidor cuando recibe el comprobante.
+
+**Único requisito técnico del código:** el certificado debe usar **RSA** (el SRI solo acepta RSA-SHA256; ECDSA y DSA no están soportados por la Ficha Técnica v2.32). El código lo detecta y devuelve error descriptivo si el certificado no es RSA.
+
+Entidades certificadoras autorizadas por el SRI (2025):
+- Banco Central del Ecuador — https://www.eci.bce.ec
+- Security Data — https://www.securitydata.net.ec
+- ANFAC — https://firmaselectronicas.ec
+- Consejo de la Judicatura — https://www.icert.fje.gob.ec
+- UANATACA Ecuador — https://store.uanataca.ec
+- ARGOSDATA — https://www.argosdata.com.ec
+- Eclipsoft — https://firmas.eclipsoft.com
+- Lazzate / Enext — https://enext.ec
+- Firma Segura EC — https://firmaseguraec.com
+
+Todos emiten archivos `.p12` RSA estándar — cualquiera de ellos funciona igual en este código.
 
 ---
-## 1. Objetivo
-Firmar un XML (ej. comprobante electr�nico con nodo ra�z `comprobante`) aplicando una firma **XAdES-BES enveloped** utilizando un certificado digital con clave privada contenido en un archivo PKCS#12.
+
+## Requisitos
+
+- .NET 10 SDK — https://dotnet.microsoft.com/download/dotnet/10.0
+- Certificado digital ecuatoriano RSA en formato PKCS#12 (`.p12` / `.pfx`)
+- Visual Studio 2022 17.12+ o VS Code con extensión C#
 
 ---
-## 2. Componentes Principales
-| Componente | Rol | Notas |
-|------------|-----|-------|
-| `Program` | Punto de entrada (console app). | Modo interactivo o por argumentos. |
-| `SignDocument` | L�gica de firma XAdES-BES. | Usa librer�as Java portadas (`es.mityc.*`). |
-| `PassStoreKS` | Acceso a KeyStore. | Maneja password PKCS#12. |
-| Librer�as `es.mityc.*` | Motor XAdES. | Portadas v�a IKVM (interop Java/.NET). |
 
----
-## 3. Flujo de Firma (Resumen)
-1. Leer par�metros: XML, certificado (.p12) y contrase�a.
-2. Cargar KeyStore PKCS#12 ? obtener certificado X509 + clave privada.
-3. Construir DOM (`org.w3c.dom.Document`).
-4. Configurar `DataToSign`: XAdES_BES, esquema 1.3.2, modo enveloped.
-5. Agregar objeto a firmar (nodo `comprobante`).
-6. Ejecutar `FirmaXML.signFile(...)`.
-7. Serializar XML firmado y devolverlo.
+## Compilar y ejecutar
 
----
-## 4. Validaciones Implementadas
-- Expiraci�n del certificado (antes de firmar si se a�ade en capas superiores).
-- Manejo controlado de errores (consola).
-- Verificaci�n de existencia de archivo y nodo objetivo.
+```powershell
+# Restaurar dependencias
+dotnet restore
 
----
-## 5. Modos de Integraci�n
-### 5.1. Consola (Actual)
+# Compilar
+dotnet build
+
+# Ejecutar (modo interactivo)
+dotnet run
+
+# Ejecutar con argumentos
+dotnet run -- <cert.p12> <password> [input.xml] [output.xml]
+
+# Ejemplo
+dotnet run -- mi_cert.p12 MiPassword entrada.xml salida_firmada.xml
+
+# Publicar autónomo (incluye runtime .NET)
+dotnet publish -c Release -r win-x64 --self-contained
 ```
-SignerXadesBesEc.exe <ruta-cert.p12> <password> [xml-entrada] [xml-salida]
-```
-Faltando par�metros ? modo interactivo.
 
-### 5.2. API (ASP.NET Web API Cl�sico)
+Salida de compilación limpia esperada:
+```
+Build succeeded in 4s    (0 errors, 0 warnings)
+```
+
+---
+
+## Uso en código
+
+### Para SRI Ecuador (recomendado)
+
 ```csharp
-[HttpPost]
-[Route("api/firma/xades")] 
-public IHttpActionResult Firmar(FirmarRequest req)
+var certBytes = File.ReadAllBytes("certificado.p12");
+var signer = new SignDocumentSriEcuador();
+string? xmlFirmado = null;
+
+bool ok = signer.Sign(
+    xmlUnsigned: File.ReadAllText("factura.xml"),
+    password: "mi_password",
+    certificate: certBytes,
+    claveAcceso: "0412202501099999999900110010010000000011234567819", // 49 dígitos
+    xmlSigned: ref xmlFirmado
+);
+
+if (ok && xmlFirmado != null)
+    File.WriteAllText("factura_firmada.xml", xmlFirmado);
+```
+
+### Genérico XAdES-BES (no específico SRI)
+
+```csharp
+var signer = new SignDocument();
+string? xmlFirmado = null;
+signer.Sign(xmlUnsigned, password, certBytes, ref xmlFirmado);
+```
+
+### Integración como API (ASP.NET)
+
+```csharp
+[HttpPost("api/firma/xades")]
+public IActionResult Firmar([FromBody] FirmarRequest req)
 {
-    if (string.IsNullOrWhiteSpace(req.Xml) || string.IsNullOrWhiteSpace(req.Password))
-        return BadRequest("Datos incompletos");
     var certBytes = Convert.FromBase64String(req.CertificadoBase64);
-    var signer = new SignDocument();
-    string xmlFirmado = null;
-    if (!signer.Sign(req.Xml, req.Password, certBytes, ref xmlFirmado))
-        return InternalServerError(new Exception("Error firmando"));
+    var signer = new SignDocumentSriEcuador();
+    string? xmlFirmado = null;
+
+    if (!signer.Sign(req.Xml, req.Password, certBytes, req.ClaveAcceso, ref xmlFirmado))
+        return StatusCode(500, "Error firmando");
+
     return Ok(new { xmlFirmado });
 }
-public class FirmarRequest { public string Xml { get; set; } public string CertificadoBase64 { get; set; } public string Password { get; set; } }
-```
-Considerar: l�mite tama�o, auditor�a, sanitizar/ocultar stacktrace.
-
-### 5.3. Servicio Windows (Batch / Carpeta / Cola)
-Pseudo:
-```csharp
-protected override void OnStart(string[] args)
-{
-    _timer = new System.Timers.Timer(5000);
-    _timer.Elapsed += (s, e) => ProcesarPendientes();
-    _timer.Start();
-}
-```
-Ver documento original para ejemplo completo (migrado aqu�).
-
-### 5.4. Certificado en Memoria / Bytes
-- Archivo `.p12` protegido (NTFS ACL).
-- Base64 desde DB / Key Vault / Vault.
-- Cache controlada (singleton seguro) si alta demanda.
-
----
-## 6. Estrategias para Pasar Par�metros
-| Escenario | Certificado | Password | XML | Output |
-|-----------|-------------|----------|-----|--------|
-| CLI | Ruta archivo | Argumento / prompt | Ruta / STDIN / prompt | Archivo / STDOUT |
-| API | Base64 body | JSON (HTTPS) | JSON | JSON (texto/Base64) |
-| Servicio Windows | Archivo / Vault | Config segura (DPAPI) | Archivo / Cola | Archivo salida |
-
----
-## 7. Seguridad
-1. No almacenar contrase�a en texto plano (usar DPAPI / ProtectedData).
-2. Permisos NTFS m�nimos al `.p12`.
-3. Limpiar buffers sensibles si aplica.
-4. Evitar exponer XML firmado en ubicaciones inseguras.
-5. Registrar thumbprint y n�mero de serie del certificado.
-6. Endurecer parser para evitar XXE:
-```csharp
-factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
-factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
-factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
-```
-7. Validar entrada (bien formado, tama�o razonable).
-8. Considerar monitoreo de expiraci�n (alerta cuando <30 d�as).
-
----
-## 8. Despliegue a Producci�n
-### 8.1. Consola
-- Empaquetar binarios + dependencias.
-- Script `.bat` / PowerShell con variables.
-
-### 8.2. API (IIS)
-- AppPool dedicado.
-- Logging (ETW / Serilog / ELK / AppInsights - futuro .NET Core/8).
-- Configurar `maxRequestLength` / `requestFiltering`.
-
-### 8.3. Servicio Windows
-- Instalar con `sc create` o `InstallUtil.exe`.
-- Cuenta de servicio con privilegios m�nimos.
-- Monitoreo (SCOM, Zabbix, etc.).
-
-### 8.4. CI/CD
-- Tagging: `vX.Y.Z`.
-- Pipeline: build ? (tests) ? publish ? despliegue.
-
-### 8.5. Observabilidad
-- Logs estructurados JSON.
-- Correlaci�n por ID de transacci�n.
-- M�tricas: tiempo promedio, errores, firmas/hora, expiraci�n.
-
----
-## 9. Errores Comunes y Soluci�n
-| Problema | Causa | Soluci�n |
-|----------|-------|----------|
-| Certificate is expired | Certificado vencido | Renovar / distribuir nuevo .p12 |
-| Null en xmlSigned | Falta nodo `comprobante` | Validar estructura antes |
-| Failed to load certificate | Password incorrecta / corrupto | Verificar credenciales / reemitir |
-| Excepci�n parser | XML mal formado | Validar antes |
-| Rendimiento bajo | Concurrencia serie | Pool procesos / servicio escalado |
-
----
-## 10. Futuras Mejores
-- Migrar a .NET 8 (librer�a XAdES nativa) cuando sea viable.
-- XAdES-EPES / pol�ticas.
-- Cache KeyStore.
-- Validaci�n cadena (OCSP / CRL).
-- Docker (Windows Containers) si se requiere empaquetado.
-
----
-## 11. Ejemplos R�pidos
-CLI:
-```
-SignerXadesBesEc.exe certs\miCert.p12 MiPassword entrada.xml salida_firmada.xml
-```
-Sin XML (usa m�nimo):
-```
-SignerXadesBesEc.exe certs\miCert.p12 MiPassword
-```
-API (cliente):
-```csharp
-var json = JsonConvert.SerializeObject(new {
-  Xml = File.ReadAllText("entrada.xml"),
-  CertificadoBase64 = Convert.ToBase64String(File.ReadAllBytes("certs/miCert.p12")),
-  Password = "MiPasswordSegura"
-});
 ```
 
 ---
-## 12. Construcci�n y Ejecuci�n Local
-Prerequisitos:
-- Windows + .NET Framework 4.8.1 Dev Pack.
-- Visual Studio 2019/2022 o MSBuild 16+.
 
-Pasos:
-1. Clonar repo.
-2. Restaurar dependencias (si hay referencias IKVM locales, validar rutas).
-3. Compilar soluci�n.
-4. Ejecutar desde consola con par�metros.
+## Clases
 
-### Notas build
-- Ajustar plataforma x86/x64 seg�n dependencias IKVM.
-- Asegurar presencia de DLLs `es.mityc.*` en output.
-
----
-## 13. Observabilidad y M�tricas
-Sugerido integrar (no implementado a�n):
-- Interfaz de logging (`ILogger`) con adaptador Serilog.
-- M�tricas (prometheus-net en migraci�n a Core) o contadores de rendimiento.
-- Evento de auditor�a por firma (timestamp, thumbprint, hash del XML original opcional).
-
----
-## 14. Contribuciones
-1. Crear issue describiendo cambio.
-2. Fork + rama feature (`feature/nombre`).
-3. Pull Request con descripci�n y pasos de prueba.
-4. Mantener estilo y comentarios en espa�ol.
-
----
-## 15. Licencia
-Pendiente de definir (MIT / Apache-2.0 sugerido). A�adir archivo `LICENSE` antes de primera release p�blica.
-
----
-## 16. Glosario
-| T�rmino | Descripci�n |
-|---------|-------------|
-| XAdES-BES | Perfil b�sico de firma electr�nica XML avanzado. |
-| Enveloped | `<Signature>` dentro del XML original. |
-| PKCS#12 | Formato certificado + clave privada. |
-| Thumbprint | Hash identificador del certificado. |
+| Clase | Propósito |
+|-------|-----------|
+| `SignDocumentSriEcuador` | Firma XAdES-BES conforme a Ficha Técnica SRI v2.32 — **usar esta para SRI** |
+| `SignDocument` | Firma XAdES-BES genérica estándar ETSI (no específica SRI) |
+| `SignedXmlWithIdResolution` | Subclase interna que resuelve `id="comprobante"` (lowercase) en .NET |
 
 ---
 
-### Estado
-Documento de arquitectura original consolidado en este README.
+## Conformidad SRI (Ficha Técnica v2.32)
+
+| Requisito SRI | Estado |
+|---|---|
+| XAdES-BES ETSI TS 101 903 v1.3.2 | ✅ |
+| Algoritmo RSA-SHA256 | ✅ |
+| Digest SHA-256 | ✅ |
+| Canonicalización C14N explícita | ✅ |
+| Transformadas enveloped + C14N en referencia al contenido | ✅ |
+| IDs basados en clave de acceso (no GUIDs) | ✅ |
+| Referencia a SignedProperties antes que referencia al contenido | ✅ |
+| KeyInfo con X509Certificate + RSAKeyValue | ✅ |
+| SigningTime zona horaria Ecuador (UTC-5, `-05:00`) | ✅ |
+| SignedDataObjectProperties con DataObjectFormat | ✅ |
+| Firma como último elemento del XML | ✅ |
+| Elemento raíz con `id="comprobante"` | ✅ |
+| Validación: cert RSA obligatorio | ✅ |
+| Validación: clave de acceso 49 dígitos | ✅ |
+| Validación: cert no expirado (verificar antes de firmar) | ✅ (Program.cs) |
+
+---
+
+## Clave de acceso (49 dígitos)
+
+```
+Formato: DDMMAAAATCRRRRRRRRRRRRRRAAEEESSSSSSSSSCCCCCCCCV
+         │       ││ │           ││ ││ │        │       │
+         │       ││ │           ││ ││ │        │       └─ Dígito verificador (módulo 11)
+         │       ││ │           ││ ││ │        └───────── Código numérico (8 dígitos)
+         │       ││ │           ││ ││ └────────────────── Secuencial (9 dígitos)
+         │       ││ │           ││ │└──────────────────── Punto de emisión (3 dígitos)
+         │       ││ │           ││ └───────────────────── Establecimiento (3 dígitos)
+         │       ││ │           │└─────────────────────── Ambiente: 1=pruebas, 2=producción
+         │       ││ │           └──────────────────────── RUC (13 dígitos)
+         │       ││ └──────────────────────────────────── Tipo comprobante (01=Factura, etc.)
+         │       │└─────────────────────────────────────── Tipo emisión (1=Normal)
+         └───────┘──────────────────────────────────────── Fecha emisión (DDMMAAAA)
+```
+
+El dígito verificador usa módulo 11 con pesos 2..7 (ciclando), de derecha a izquierda.
+
+---
+
+## Estructura XML resultante
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<factura id="comprobante" version="1.1.0">
+    <!-- ... datos del comprobante ... -->
+
+    <!-- Firma — SIEMPRE último elemento -->
+    <ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#"
+                  xmlns:etsi="http://uri.etsi.org/01903/v1.3.2#"
+                  Id="Signature{claveAcceso}">
+        <ds:SignedInfo>
+            <ds:CanonicalizationMethod Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315"/>
+            <ds:SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"/>
+            <!-- 1. Referencia a SignedProperties (primero) -->
+            <ds:Reference Id="SignedPropertiesID{claveAcceso}"
+                          Type="http://uri.etsi.org/01903#SignedProperties"
+                          URI="#Signature{claveAcceso}-SignedProperties{claveAcceso}">
+                <ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/>
+                <ds:DigestValue>...</ds:DigestValue>
+            </ds:Reference>
+            <!-- 2. Referencia al contenido (segundo) -->
+            <ds:Reference Id="Reference-ID-{claveAcceso}" URI="#comprobante">
+                <ds:Transforms>
+                    <ds:Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"/>
+                    <ds:Transform Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315"/>
+                </ds:Transforms>
+                <ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/>
+                <ds:DigestValue>...</ds:DigestValue>
+            </ds:Reference>
+        </ds:SignedInfo>
+        <ds:SignatureValue Id="SignatureValue{claveAcceso}">...</ds:SignatureValue>
+        <ds:KeyInfo Id="Certificate{claveAcceso}">
+            <ds:X509Data><ds:X509Certificate>...</ds:X509Certificate></ds:X509Data>
+            <ds:KeyValue><ds:RSAKeyValue><ds:Modulus>...</ds:Modulus><ds:Exponent>AQAB</ds:Exponent></ds:RSAKeyValue></ds:KeyValue>
+        </ds:KeyInfo>
+        <ds:Object Id="Signature{claveAcceso}-Object{claveAcceso}">
+            <etsi:QualifyingProperties Target="#Signature{claveAcceso}">
+                <etsi:SignedProperties Id="Signature{claveAcceso}-SignedProperties{claveAcceso}">
+                    <etsi:SignedSignatureProperties>
+                        <etsi:SigningTime>2025-12-04T10:30:00-05:00</etsi:SigningTime>
+                        <etsi:SigningCertificate>...</etsi:SigningCertificate>
+                    </etsi:SignedSignatureProperties>
+                    <etsi:SignedDataObjectProperties>
+                        <etsi:DataObjectFormat ObjectReference="#Reference-ID-{claveAcceso}">
+                            <etsi:Description>contenido comprobante</etsi:Description>
+                            <etsi:MimeType>text/xml</etsi:MimeType>
+                        </etsi:DataObjectFormat>
+                    </etsi:SignedDataObjectProperties>
+                </etsi:SignedProperties>
+            </etsi:QualifyingProperties>
+        </ds:Object>
+    </ds:Signature>
+</factura>
+```
+
+---
+
+## Ambientes SRI
+
+| Ambiente | URL Recepción |
+|----------|---------------|
+| Pruebas (certificación) | `https://celcer.sri.gob.ec/comprobantes-electronicos-ws/RecepcionComprobantesOffline` |
+| Producción | `https://cel.sri.gob.ec/comprobantes-electronicos-ws/RecepcionComprobantesOffline` |
+
+El XML firmado se envía como Base64 al método `validarComprobante` del WSDL del SRI.
+
+---
+
+## Errores comunes
+
+| Error | Causa | Solución |
+|-------|-------|----------|
+| `El certificado no usa RSA` | Certificado ECDSA o DSA | Obtener certificado RSA de CA autorizada |
+| `Certificate is expired` | Certificado vencido | Renovar `.p12` con la CA |
+| `La clave de acceso debe tener 49 dígitos` | Clave incorrecta | Verificar cálculo de clave y dígito verificador |
+| `Failed to load certificate` | Password incorrecta o archivo corrupto | Verificar credenciales o reemitir |
+| Firma rechazada por SRI | CA no autorizada | Usar certificado de entidad en la lista SRI |
+| Firma rechazada por SRI | Ambiente incorrecto (1 vs 2) | Verificar campo `<ambiente>` en el XML |
+
+---
+
+## Seguridad
+
+- No almacenar el password en texto plano — usar `ProtectedData` (DPAPI) o variables de entorno
+- Permisos NTFS mínimos al archivo `.p12`
+- Validar tamaño y bien formado del XML de entrada antes de firmar
+- Registrar thumbprint y serial del certificado en cada operación de firma
+- Alertar cuando el certificado tenga menos de 30 días para vencer
+
+---
+
+## Dependencias
+
+| Paquete | Versión | Uso |
+|---------|---------|-----|
+| `System.Security.Cryptography.Xml` | 10.0.6 | Motor XML-DSig / XAdES |
+| `System.Security.Cryptography.Pkcs` | 10.0.6 | Carga de certificados PKCS#12 |
+
+---
+
+## Mejoras futuras
+
+- Soporte XAdES-T (timestamp de autoridad TSA)
+- Generación automática de clave de acceso con módulo 11
+- Cliente SOAP integrado para envío al SRI
+- Generación de RIDE (PDF)
+- Validación offline contra XSD del SRI
+- Soporte ECDSA si el SRI lo habilita en futuras versiones
+
+---
+
+## Referencias
+
+- [Ficha Técnica SRI v2.32](https://www.sri.gob.ec/facturacion-electronica) — especificación oficial
+- [ETSI TS 101 903](https://www.etsi.org/deliver/etsi_ts/101900_101999/101903/) — estándar XAdES
+- [System.Security.Cryptography.Xml](https://docs.microsoft.com/dotnet/api/system.security.cryptography.xml) — docs .NET
+
+---
+
+## Licencia
+
+MIT — ver archivo `LICENSE`.

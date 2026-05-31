@@ -1,181 +1,196 @@
-﻿using es.mityc.firmaJava.libreria.xades;
-using es.mityc.javasign.pkstore;
-using es.mityc.javasign.pkstore.keystore;
-using es.mityc.javasign.xml.refs;
-using java.io;
-using java.security;
-using java.security.cert;
-using javax.xml.parsers;
-using org.apache.xml.security.utils;
-using org.w3c.dom;
-using System;
+﻿using System;
 using System.IO;
-using System.Text;
-using Console = System.Console;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
+using System.Security.Cryptography.Xml;
+using System.Xml;
 
 namespace SignerXadesBesEc
 {
     /// <summary>
     /// Clase responsable de realizar el proceso de firma XAdES-BES sobre un documento XML.
-    /// Envuelve la interacción con las librerías Java (portadas) necesarias para cargar el certificado,
-    /// preparar el XML y generar la firma embebida (enveloped).
+    /// Utiliza System.Security.Cryptography.Xml nativo de .NET para generar firmas XAdES-BES.
+    /// Esta es la implementación genérica. Para SRI Ecuador use <see cref="SignDocumentSriEcuador"/>.
     /// </summary>
     public class SignDocument
     {
-        /// <summary>
-        /// Carga el certificado desde un arreglo de bytes de un archivo PKCS#12 (p12/pfx),
-        /// obteniendo el certificado X509, la clave privada y el proveedor criptográfico.
-        /// </summary>
-        /// <param name="claveArvhivoP12">Contraseña del archivo PKCS#12.</param>
-        /// <param name="certificate">Contenido binario del archivo PKCS#12.</param>
-        /// <param name="privateKey">(out) Clave privada asociada al certificado de firma.</param>
-        /// <param name="provider">(out) Proveedor criptográfico utilizado por la librería de firma.</param>
-        /// <returns>Certificado X509 listo para la firma; null si no se pudo cargar o no hay certificados de firma.</returns>
-        private X509Certificate _LoadCertificate(string claveArvhivoP12, byte[] certificate,
-            out PrivateKey privateKey, out Provider provider)
-        {
-            provider = null;
-            privateKey = null;
-
-            // Se utiliza MemoryStream para mantener consistencia (aunque la librería Java opera directamente con el byte[])
-            using (var memoryStream = new MemoryStream(certificate))
-            {
-                // Se crea un InputStream Java a partir del contenido del certificado.
-                var stream = new ByteArrayInputStream(certificate);
-
-                // Instancia un KeyStore de tipo PKCS12 y lo carga con la contraseña indicada.
-                var instance = KeyStore.getInstance("PKCS12");
-                instance.load(stream, claveArvhivoP12.ToCharArray());
-
-                // Administrador de almacén que permitirá obtener certificados y sus claves relacionadas.
-                var pkStoreManager = (IPKStoreManager)new KSStore(instance, new PassStoreKS(claveArvhivoP12));
-                var signCertificates = pkStoreManager.getSignCertificates();
-
-                // Se toma el primer certificado de firma disponible (si existe).
-                if (signCertificates.size() > 0)
-                {
-                    var xc = (X509Certificate)signCertificates.get(0);
-                    privateKey = pkStoreManager.getPrivateKey(xc); // Obtiene clave privada asociada.
-                    provider = pkStoreManager.getProvider(xc);     // Obtiene el proveedor criptográfico.
-                    return xc;
-                }
-
-                // Cierra el stream antes de salir si no hay certificado.
-                stream.close();
-                return null;
-            }
-        }
-
-        /// <summary>
-        /// Convierte una cadena XML en un objeto Document (DOM) que las librerías de firma pueden manipular.
-        /// </summary>
-        /// <param name="xml">Contenido XML en texto.</param>
-        /// <returns>Instancia Document; null si ocurre un error de análisis.</returns>
-        private Document LoadXmlFromString(string xml)
-        {
-            try
-            {
-                var factory = DocumentBuilderFactory.newInstance();
-                factory.setNamespaceAware(true); // Importante para la correcta firma XML con namespaces.
-                var builder = factory.newDocumentBuilder();
-                var documento = builder.parse(new ByteArrayInputStream(Encoding.UTF8.GetBytes(xml)));
-                return documento;
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Error leyendo el XML: {ex.Message}");
-                return null;
-            }
-        }
-
-        /// <summary>
-        /// Convierte un objeto Document (DOM) en su representación binaria (bytes) UTF-8 del XML firmado.
-        /// </summary>
-        /// <param name="doc">Documento firmado o modificado por el proceso.</param>
-        /// <returns>Arreglo de bytes del XML; null si falla la serialización.</returns>
-        private byte[] GetBytesFromDocument(Document doc)
-        {
-            try
-            {
-                var baos = new ByteArrayOutputStream();
-                XMLUtils.outputDOM(doc, baos, true); // true = con declaración XML / formato adecuado.
-                return baos.toByteArray();
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine("Error obteniendo la representación firmada del comprobante: " + ex.Message);
-                return null;
-            }
-        }
+        private const string XadesNamespaceUri = "http://uri.etsi.org/01903/v1.3.2#";
+        private const string XmlDsigNamespaceUri = "http://www.w3.org/2000/09/xmldsig#";
+        private const string CanonicalizationMethod = "http://www.w3.org/TR/2001/REC-xml-c14n-20010315";
 
         /// <summary>
         /// Firma un documento XML en formato XAdES-BES (enveloped) utilizando el certificado proporcionado.
         /// </summary>
-        /// <param name="xmlUnsigned">XML original sin firmar. Debe contener el nodo 'comprobante' que será el nodo padre de la firma.</param>
+        /// <param name="xmlUnsigned">XML original sin firmar.</param>
         /// <param name="password">Contraseña del certificado (archivo PKCS#12).</param>
         /// <param name="certificate">Bytes del archivo PKCS#12 que contiene certificado y clave privada.</param>
         /// <param name="xmlSigned">(ref) Resultado del XML firmado si el proceso finaliza correctamente.</param>
         /// <returns>true si la firma se generó correctamente; false en caso de error.</returns>
-        public bool Sign(string xmlUnsigned, string password, byte[] certificate, ref string xmlSigned)
+        public bool Sign(string xmlUnsigned, string password, byte[] certificate, ref string? xmlSigned)
         {
-            var signed = true; // Indicador de estado del proceso.
-
-            // 1. Cargar certificado y obtener clave privada / proveedor.
-            var certificadoFirma = _LoadCertificate(password, certificate, out var privateKey, out var provider);
-
-            // 2. Validar que el certificado se haya cargado correctamente.
-            if (certificadoFirma == null)
-            {
-                xmlSigned = null;
-                return false;
-            }
-
             try
             {
-                // 3. Parsear el XML de entrada a un Document DOM.
-                var document = LoadXmlFromString(xmlUnsigned);
-                if (document == null)
+                // Load certificate. Note: EphemeralKeySet is intentionally omitted because
+                // System.Security.Cryptography.Xml's ComputeSignature() requires the CNG key
+                // to be accessible via the standard provider chain — ephemeral keys bypass this.
+                // The cert (and its temporary key store entry) is disposed immediately after signing.
+                var cert = X509CertificateLoader.LoadPkcs12(certificate, password,
+                    X509KeyStorageFlags.Exportable);
+
+                // 2. Validar que el certificado tenga clave privada RSA
+                if (!cert.HasPrivateKey)
                 {
+                    Console.WriteLine("Error: El certificado no contiene clave privada.");
                     xmlSigned = null;
+                    cert.Dispose();
                     return false;
                 }
 
-                // 4. Preparar objeto DataToSign configurando formato, esquema y tipo de firma.
-                var dataToSign = new DataToSign();
-                dataToSign.setXadesFormat(EnumFormatoFirma.XAdES_BES); // Formato XAdES-BES.
-                dataToSign.setEsquema(XAdESSchemas.XAdES_132);         // Esquema a utilizar.
-                dataToSign.setXMLEncoding("UTF-8");                   // Codificación del XML.
-                dataToSign.setEnveloped(true);                         // Firma de tipo enveloped (inserta firma dentro del XML).
-
-                // 5. Indicar el objeto a firmar: el nodo 'comprobante'.
-                dataToSign.addObject(new ObjectToSign(new InternObjectToSign("comprobante"),
-                    "contenido comprobante", null, "text/xml", null));
-                dataToSign.setParentSignNode("comprobante");          // Nodo padre donde se anclará la firma.
-                dataToSign.setDocument(document);                      // Documento que será firmado.
-
-                // 6. Ejecutar la firma con la librería.
-                var signXml = new FirmaXML();
-                var objArray = signXml.signFile(certificadoFirma, dataToSign, privateKey, provider);
-                // objArray puede contener el Document firmado y otros datos (no se usa explícitamente aquí).
-
-                // 7. Convertir el Document firmado a cadena.
-                var byteXmlSigned = GetBytesFromDocument(document);
-                switch (byteXmlSigned)
+                if (cert.GetRSAPrivateKey() == null)
                 {
-                    case null:
-                        xmlSigned = null;
-                        return false;
-                    default:
-                        xmlSigned = Encoding.UTF8.GetString(byteXmlSigned);
-                        break;
+                    Console.WriteLine("Error: El certificado no usa RSA. Esta implementación requiere certificados RSA.");
+                    xmlSigned = null;
+                    cert.Dispose();
+                    return false;
                 }
+
+                // 3. Cargar el XML a firmar
+                var xmlDoc = new XmlDocument();
+                xmlDoc.PreserveWhitespace = true;
+                xmlDoc.LoadXml(xmlUnsigned);
+
+                // 4. Crear la firma XML
+                var signedXml = new SignedXml(xmlDoc);
+                signedXml.SigningKey = cert.GetRSAPrivateKey() ?? throw new InvalidOperationException("No se pudo obtener la clave privada RSA");
+
+                // 5. Configurar SignedInfo con algoritmos correctos (RSA-SHA256, C14N)
+                if (signedXml.SignedInfo != null)
+                {
+                    signedXml.SignedInfo.CanonicalizationMethod = CanonicalizationMethod;
+                    signedXml.SignedInfo.SignatureMethod = SignedXml.XmlDsigRSASHA256Url;
+                }
+
+                // 6. Configurar la referencia al documento (firma enveloped)
+                var reference = new Reference("");
+                reference.AddTransform(new XmlDsigEnvelopedSignatureTransform());
+                reference.AddTransform(new XmlDsigC14NTransform()); // C14N explícito
+                reference.DigestMethod = SignedXml.XmlDsigSHA256Url;
+                signedXml.AddReference(reference);
+
+                // 7. Agregar información del certificado (KeyInfo)
+                var keyInfo = new KeyInfo();
+                keyInfo.AddClause(new KeyInfoX509Data(cert));
+                signedXml.KeyInfo = keyInfo;
+
+                // 8. Agregar propiedades XAdES-BES
+                AddXadesInfo(signedXml, cert);
+
+                // 9. Calcular la firma
+                signedXml.ComputeSignature();
+
+                // 10. Obtener el elemento XML de la firma
+                var xmlDigitalSignature = signedXml.GetXml();
+
+                // 11. Insertar la firma en el documento (como último hijo del elemento raíz)
+                xmlDoc.DocumentElement?.AppendChild(xmlDoc.ImportNode(xmlDigitalSignature, true));
+
+                // 12. Convertir a string
+                using (var stringWriter = new StringWriter())
+                using (var xmlWriter = XmlWriter.Create(stringWriter, new XmlWriterSettings
+                {
+                    Indent = false,
+                    Encoding = System.Text.Encoding.UTF8,
+                    OmitXmlDeclaration = false
+                }))
+                {
+                    xmlDoc.Save(xmlWriter);
+                    xmlSigned = stringWriter.ToString();
+                }
+
+                cert.Dispose();
+                return true;
             }
             catch (Exception ex)
             {
-                signed = false;
-                Console.WriteLine("Error al firmar el comprobante: " + ex.Message);
+                Console.WriteLine($"Error al firmar el comprobante: {ex.Message}");
+                Console.WriteLine($"Detalle: {ex.StackTrace}");
+                xmlSigned = null;
+                return false;
             }
-            return signed;
+        }
+
+        /// <summary>
+        /// Agrega las propiedades XAdES-BES al objeto SignedXml
+        /// </summary>
+        private void AddXadesInfo(SignedXml signedXml, X509Certificate2 cert)
+        {
+            var doc = new XmlDocument();
+
+            // SignedProperties
+            var signedPropertiesId = "SignedProperties-" + Guid.NewGuid().ToString();
+            var signedProperties = doc.CreateElement("xades", "SignedProperties", XadesNamespaceUri);
+            signedProperties.SetAttribute("Id", signedPropertiesId);
+
+            // SignedSignatureProperties
+            var signedSignatureProperties = doc.CreateElement("xades", "SignedSignatureProperties", XadesNamespaceUri);
+
+            // SigningTime
+            var signingTime = doc.CreateElement("xades", "SigningTime", XadesNamespaceUri);
+            signingTime.InnerText = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ");
+            signedSignatureProperties.AppendChild(signingTime);
+
+            // SigningCertificate
+            var signingCertificate = doc.CreateElement("xades", "SigningCertificate", XadesNamespaceUri);
+            var certElement = doc.CreateElement("xades", "Cert", XadesNamespaceUri);
+
+            // CertDigest
+            var certDigest = doc.CreateElement("xades", "CertDigest", XadesNamespaceUri);
+            var digestMethod = doc.CreateElement("ds", "DigestMethod", XmlDsigNamespaceUri);
+            digestMethod.SetAttribute("Algorithm", SignedXml.XmlDsigSHA256Url);
+            var digestValue = doc.CreateElement("ds", "DigestValue", XmlDsigNamespaceUri);
+
+            using (var sha256 = SHA256.Create())
+            {
+                var hash = sha256.ComputeHash(cert.RawData);
+                digestValue.InnerText = Convert.ToBase64String(hash);
+            }
+
+            certDigest.AppendChild(digestMethod);
+            certDigest.AppendChild(digestValue);
+            certElement.AppendChild(certDigest);
+
+            // IssuerSerial
+            var issuerSerial = doc.CreateElement("xades", "IssuerSerial", XadesNamespaceUri);
+            var x509IssuerName = doc.CreateElement("ds", "X509IssuerName", XmlDsigNamespaceUri);
+            x509IssuerName.InnerText = cert.IssuerName.Name;
+            var x509SerialNumber = doc.CreateElement("ds", "X509SerialNumber", XmlDsigNamespaceUri);
+            x509SerialNumber.InnerText = cert.SerialNumber;
+            issuerSerial.AppendChild(x509IssuerName);
+            issuerSerial.AppendChild(x509SerialNumber);
+            certElement.AppendChild(issuerSerial);
+
+            signingCertificate.AppendChild(certElement);
+            signedSignatureProperties.AppendChild(signingCertificate);
+
+            signedProperties.AppendChild(signedSignatureProperties);
+
+            // QualifyingProperties
+            var qualifyingProperties = doc.CreateElement("xades", "QualifyingProperties", XadesNamespaceUri);
+            qualifyingProperties.SetAttribute("Target", "#Signature-" + Guid.NewGuid().ToString());
+            qualifyingProperties.AppendChild(signedProperties);
+
+            // Crear DataObject para contener las propiedades XAdES
+            var dataObject = new DataObject();
+            dataObject.Data = qualifyingProperties.SelectNodes(".") ?? throw new InvalidOperationException("Error al crear nodos XAdES");
+            dataObject.Id = "XadesObject-" + Guid.NewGuid().ToString();
+
+            signedXml.AddObject(dataObject);
+
+            // Agregar referencia a SignedProperties
+            var reference = new Reference("#" + signedPropertiesId);
+            reference.Type = "http://uri.etsi.org/01903#SignedProperties";
+            reference.DigestMethod = SignedXml.XmlDsigSHA256Url;
+            signedXml.AddReference(reference);
         }
     }
 }
